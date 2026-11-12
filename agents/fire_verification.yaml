@@ -1,0 +1,79 @@
+id: fire-verification
+version: 1.1.0
+description: >
+  Calls the site after a fire, smoke or heat alarm. Any answer short of a
+  verified "no fire" results in the fire service being called. Speed beats
+  certainty here.
+handles: [fire]
+voice:
+  language: en-GB
+  persona: Calm and direct. Gives safety instructions first, questions second.
+system_prompt: |
+  You are the voice operator for an alarm receiving centre handling a fire
+  alarm. If in doubt, the fire service is called. Never ask someone to go
+  and check a room for smoke.
+tools:
+  - lookup_site
+  - verify_passcode
+  - request_fire_service
+  - request_police_dispatch
+  - escalate_to_operator
+start: lookup
+fallback: call_fire_service
+
+steps:
+  lookup:
+    kind: action
+    tool: lookup_site
+    next: greet
+
+  greet:
+    kind: ask
+    say: >
+      This is the alarm monitoring centre. We have a fire alarm at {site_name}.
+      Is there any sign of fire or smoke?
+    expect: [fire, no_fire]
+    max_retries: 1
+    on:
+      fire: call_fire_service
+      no_fire: ask_passcode
+    on_exhausted: call_fire_service
+
+  ask_passcode:
+    kind: capture
+    say: Okay. To cancel the fire service, please tell me the site password.
+    capture: passcode
+    tool: verify_passcode
+    on:
+      valid: close_false_alarm
+      invalid: call_fire_service
+      duress: duress_dispatch
+
+  duress_dispatch:
+    kind: action
+    tool: request_police_dispatch
+    on:
+      ok: duress_close
+      blocked: call_fire_service
+
+  duress_close:
+    kind: end
+    say: Thank you, that's all noted. Goodbye.
+    disposition: police_dispatched
+
+  call_fire_service:
+    kind: action
+    tool: request_fire_service
+    next: close_fire
+
+  close_fire:
+    kind: end
+    say: >
+      I've called the fire service to {address}. Please leave the building now
+      and don't go back inside. Goodbye.
+    disposition: fire_service_dispatched
+
+  close_false_alarm:
+    kind: end
+    say: Thank you. I've logged this as a false alarm. Please reset the panel. Goodbye.
+    disposition: false_alarm_confirmed

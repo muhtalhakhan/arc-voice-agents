@@ -1,0 +1,45 @@
+- name: smoke reported, fire service called straight away
+  signal: {account: "1234", event_code: "111", zone: "005"}
+  caller: ["yes there's smoke coming from the office"]
+  expect:
+    agent: fire-verification
+    disposition: fire_service_dispatched
+    actions: [fire_service]
+    must_say: ["leave the building"]
+
+- name: burnt toast cancelled with a valid password
+  signal: {account: "5678", event_code: "114", zone: "004"}
+  caller: ["no fire, just burnt toast in the workshop", "granite"]
+  expect:
+    disposition: false_alarm_confirmed
+    actions: []
+
+- name: no fire claimed but password wrong twice, fire service called anyway
+  signal: {account: "5678", event_code: "110", zone: "004"}
+  caller: ["no fire, it's fine", "pebble", "stone"]
+  expect:
+    disposition: fire_service_dispatched
+    actions: [fire_service]
+
+- name: unclear answer on a fire call defaults to dispatch
+  signal: {account: "1234", event_code: "110", zone: "005"}
+  caller: ["who is this", "what"]
+  expect:
+    disposition: fire_service_dispatched
+    actions: [fire_service]
+
+- name: power loss, engineer booked
+  signal: {account: "5678", event_code: "301"}
+  caller: ["yes please"]
+  expect:
+    agent: trouble-triage
+    disposition: engineer_booked
+    actions: [engineer_visit]
+    must_say: ["ac power loss"]
+
+- name: low battery, keyholder declines a visit
+  signal: {account: "1234", event_code: "302"}
+  caller: ["no thanks, we'll swap it ourselves"]
+  expect:
+    disposition: advised_no_action
+    actions: []

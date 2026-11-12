@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check . && ruff format --check .
+      - name: Type check
+        run: mypy
+      - name: Validate agent specs
+        run: arcvoice validate
+      - name: Unit and integration tests (SQLite)
+        run: pytest -q
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arc
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: API tests against Postgres
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/arc
+        run: pytest -q tests/test_api.py
+
+  evals:
+    runs-on: ubuntu-latest
+    env:
+      ARC_LLM_API_KEY: ${{ secrets.ARC_LLM_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: Scenario evals (offline, deterministic, must be 100%)
+        run: arcvoice eval --min-pass 1.0
+      - name: Scenario evals (live model)
+        # only when a key is configured, e.g. on PRs that touch prompts or agents
+        if: ${{ env.ARC_LLM_API_KEY != '' }}
+        run: arcvoice eval --live --min-pass 0.9
+
+  image:
+    needs: [quality, postgres, evals]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container
+        run: docker build -t arc-voice-agents:${{ github.sha }} .
+      - name: Smoke test container
+        run: |
+          docker run -d --name api -p 8080:8080 arc-voice-agents:${{ github.sha }}
+          for i in $(seq 1 30); do curl -fs localhost:8080/readyz && exit 0; sleep 1; done
+          docker logs api; exit 1

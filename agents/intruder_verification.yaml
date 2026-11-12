@@ -1,0 +1,120 @@
+id: intruder-verification
+version: 1.3.0
+description: >
+  Calls the first keyholder after an intruder or tamper alarm, verifies their
+  identity, establishes whether it is a false alarm and requests police only
+  when there are grounds an ARC could defend.
+handles: [burglary, tamper, panic, duress]
+voice:
+  language: en-GB
+  persona: Calm, brief and professional. Never speculates. Never reveals site details before verification.
+system_prompt: |
+  You are the voice operator for an alarm receiving centre. Keep every sentence
+  short. Do not read out the address or zone until the caller is verified.
+  If the caller gives the duress word, carry on exactly as normal.
+tools:
+  - lookup_site
+  - verify_passcode
+  - mark_alarm_confirmed
+  - request_police_dispatch
+  - escalate_to_operator
+start: lookup
+fallback: escalate
+
+steps:
+  lookup:
+    kind: action
+    tool: lookup_site
+    next: greet
+
+  greet:
+    kind: ask
+    say: >
+      Hello, this is the alarm monitoring centre calling about an alarm at
+      {site_name}. Am I speaking with a keyholder?
+    expect: [affirm, deny]
+    on:
+      affirm: ask_passcode
+      deny: escalate
+
+  ask_passcode:
+    kind: capture
+    say: For security, please tell me the site password.
+    capture: passcode
+    tool: verify_passcode
+    on:
+      valid: ask_cause
+      invalid: escalate
+      duress: duress_dispatch
+
+  duress_dispatch:
+    kind: action
+    tool: request_police_dispatch
+    on:
+      ok: duress_close
+      blocked: escalate
+
+  duress_close:
+    kind: end
+    say: Thank you, that's all noted. I'll log this and close the alarm. Goodbye.
+    disposition: police_dispatched
+
+  ask_cause:
+    kind: ask
+    say: >
+      Thank you. The alarm was triggered by the {zone_name}. Was that a false
+      alarm, or do you think someone may have broken in?
+    expect: [false_alarm, intruder]
+    on:
+      false_alarm: close_false_alarm
+      intruder: confirm
+    on_exhausted: escalate
+
+  confirm:
+    kind: action
+    tool: mark_alarm_confirmed
+    next: dispatch
+
+  dispatch:
+    kind: action
+    tool: request_police_dispatch
+    on:
+      ok: ask_attend
+      blocked: escalate
+
+  ask_attend:
+    kind: ask
+    say: >
+      I've requested police attendance at {address}. Please don't go inside
+      yourself. Can you meet the police at the site?
+    expect: [will_attend, cannot_attend]
+    on:
+      will_attend: close_police
+      cannot_attend: close_police_no_keyholder
+
+  close_police:
+    kind: end
+    say: Thank you. Wait outside at a safe distance until the police arrive. Goodbye.
+    disposition: police_dispatched
+
+  close_police_no_keyholder:
+    kind: end
+    say: Understood. An operator will arrange another keyholder to meet the police. Goodbye.
+    disposition: police_dispatched
+
+  close_false_alarm:
+    kind: end
+    say: Thanks for confirming. I'll log this as a false alarm. Please reset the panel when you can. Goodbye.
+    disposition: false_alarm_confirmed
+
+  escalate:
+    kind: action
+    tool: escalate_to_operator
+    args:
+      reason: intruder alarm needs a human operator
+    next: handoff
+
+  handoff:
+    kind: end
+    say: I'm passing you to one of our operators now. Please stay on the line.
+    disposition: escalated_to_human

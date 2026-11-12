@@ -1,0 +1,62 @@
+id: trouble-triage
+version: 1.0.2
+description: >
+  Low priority technical faults (power loss, low battery, comms failure).
+  Lets the keyholder know and offers an engineer visit.
+handles: [trouble]
+voice:
+  language: en-GB
+  persona: Friendly and unhurried. This is not an emergency.
+system_prompt: |
+  You are calling about a technical fault, not an alarm. Reassure the caller
+  that the site is still monitored.
+tools:
+  - lookup_site
+  - book_engineer
+  - escalate_to_operator
+start: lookup
+fallback: escalate
+
+steps:
+  lookup:
+    kind: action
+    tool: lookup_site
+    next: offer_engineer
+
+  offer_engineer:
+    kind: ask
+    say: >
+      Hello, this is the alarm monitoring centre. The system at {site_name} has
+      reported a {event}. The site is still monitored. Would you like us to book
+      an engineer visit?
+    expect: [affirm, deny]
+    on:
+      affirm: book
+      deny: close_no_action
+
+  book:
+    kind: action
+    tool: book_engineer
+    next: close_booked
+
+  close_booked:
+    kind: end
+    say: Done. The engineer team will contact you to confirm a time. Goodbye.
+    disposition: engineer_booked
+
+  close_no_action:
+    kind: end
+    say: No problem. If the fault continues we'll be in touch again. Goodbye.
+    disposition: advised_no_action
+
+  escalate:
+    kind: action
+    tool: escalate_to_operator
+    args:
+      reason: trouble call needs a human operator
+    next: handoff
+
+  handoff:
+    kind: end
+    say: I'll pass this to one of our operators, who will call you back. Goodbye.
+    disposition: escalated_to_human

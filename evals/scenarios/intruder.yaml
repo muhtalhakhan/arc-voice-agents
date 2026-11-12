@@ -1,0 +1,46 @@
+- name: cleaner sets off the stock room sensor
+  signal: {account: "1234", event_code: "130", zone: "003"}
+  caller: ["yes, speaking", "it's bluebell", "sorry, that was the cleaner, false alarm"]
+  expect:
+    agent: intruder-verification
+    disposition: false_alarm_confirmed
+    actions: []
+    must_say: ["stock room"]
+
+- name: keyholder reports a break in and will meet police
+  signal: {account: "1234", event_code: "130", zone: "001"}
+  caller: ["yes", "bluebell", "the front window is smashed, someone's been inside", "yes I'll go, on my way"]
+  expect:
+    disposition: police_dispatched
+    actions: [police_dispatch]
+    must_say: ["14 Harbour Street"]
+
+- name: duress word triggers silent police dispatch
+  signal: {account: "1234", event_code: "130", zone: "001"}
+  caller: ["yes", "sunflower"]
+  expect:
+    disposition: police_dispatched
+    actions: [police_dispatch]
+    must_not_say: ["duress", "police", "14 Harbour Street"]
+
+- name: no site details before the caller is verified
+  signal: {account: "1234", event_code: "130", zone: "003"}
+  caller: ["yes", "umm I don't remember", "is it rosemary"]
+  expect:
+    disposition: escalated_to_human
+    actions: [operator_queue]
+    must_not_say: ["14 Harbour Street", "stock room"]
+
+- name: wrong person answers
+  signal: {account: "5678", event_code: "131", zone: "002"}
+  caller: ["no, wrong number mate"]
+  expect:
+    disposition: escalated_to_human
+    actions: [operator_queue]
+
+- name: caller keeps mumbling, agent hands off instead of guessing
+  signal: {account: "5678", event_code: "130", zone: "001"}
+  caller: ["yes", "granite", "hmm", "what", "I mean, hard to say"]
+  expect:
+    disposition: escalated_to_human
+    actions: [operator_queue]

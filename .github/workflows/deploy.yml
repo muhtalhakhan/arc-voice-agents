@@ -1,0 +1,71 @@
+name: deploy
+
+# Build once, promote the same image: dev on every merge to main,
+# prod only after a manual approval on the `prod` GitHub environment.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write # keyless auth to GCP via Workload Identity Federation
+
+env:
+  REGION: europe-west1
+  SHA: ${{ github.event.workflow_run.head_sha }}
+  IMAGE: europe-west1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/arc/arc-voice-agents:${{ github.event.workflow_run.head_sha }}
+
+jobs:
+  build:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.GCP_PROJECT != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+      - run: docker build -t "$IMAGE" . && docker push "$IMAGE"
+
+  dev:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy to dev with no traffic, smoke test, then shift traffic
+        run: |
+          gcloud run deploy arc-voice-agents-dev --image "$IMAGE" --region "$REGION" --no-traffic --tag "sha-${SHA::7}"
+          URL=$(gcloud run services describe arc-voice-agents-dev --region "$REGION" --format 'value(status.traffic[0].url)')
+          curl -fs -H "Authorization: Bearer $(gcloud auth print-identity-token)" "https://sha-${SHA::7}---${URL#https://}/readyz"
+          gcloud run services update-traffic arc-voice-agents-dev --region "$REGION" --to-latest
+
+  prod:
+    needs: dev
+    runs-on: ubuntu-latest
+    environment: prod # protected: requires a reviewer
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Canary 10%, then full rollout
+        run: |
+          gcloud run deploy arc-voice-agents-prod --image "$IMAGE" --region "$REGION" --no-traffic
+          REV=$(gcloud run services describe arc-voice-agents-prod --region "$REGION" --format 'value(status.latestCreatedRevisionName)')
+          gcloud run services update-traffic arc-voice-agents-prod --region "$REGION" --to-revisions "$REV=10"
+          sleep 300 # watch error rate and disposition metrics during the canary window
+          gcloud run services update-traffic arc-voice-agents-prod --region "$REGION" --to-latest
+      # rollback: gcloud run services update-traffic arc-voice-agents-prod --to-revisions PREVIOUS_REVISION=100
